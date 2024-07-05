@@ -28,7 +28,8 @@ contract ESCEngine is ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% overcollateralized
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 private constant LIQUIDATION_BONUS = 10; // 10 percent bonus
 
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
@@ -42,6 +43,7 @@ contract ESCEngine is ReentrancyGuard {
      * Events
      */
     event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
+    event CollteralRedeemed(address indexed from, address indexed to, address indexed token, uint256 amount);
 
     /**
      * Errors
@@ -52,6 +54,10 @@ contract ESCEngine is ReentrancyGuard {
     error ESCEngine__TransferFailed();
     error ESCEngine__InsufficientHealthFactor(uint256 healthFactor);
     error ESCEngine__MintFailed();
+    error ESCEngine__NoLiquidationNeeded();
+    error ESCEngine__HealthFactorNotImproved();
+    error ESCEngine__HealthFactorNotAvailable();
+    error ESCEngine__DebtAmountTooLarge();
 
     /**
      * Modifiers
@@ -72,6 +78,11 @@ contract ESCEngine is ReentrancyGuard {
 
     /**
      * Functions
+     */
+
+    /**
+     * @param tokenAddresses Contract addresses of tokens accepted as collateral
+     * @param priceFeedAddresses Chainlink price feed addresses of the accepted tokens
      */
     constructor(address[] memory tokenAddresses, address[] memory priceFeedAddresses) {
         // Usd Price Feeds
@@ -108,22 +119,121 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
+     *  @param tokenCollateralAddress Token address of Collateral
+     *  @param amountCollateral Collateral amount to redeem
+     *  @param amountESCToBurn ESC amount to be burned for redeeming colletral
      */
-    function redeemCollateralForESC() external {}
-    function redeemCollateral() external {}
+    function redeemCollateralForESC(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountESCToBurn)
+        external
+    {
+        burnESC(amountESCToBurn);
+        redeemCollateral(tokenCollateralAddress, amountCollateral);
+        // redeemCollateral already checks health factor
+    }
 
-    function burnESC() external {}
-    function liquidate() external {}
+    /**
+     *  @notice To redeem collateral health factor must be over 1 AFTER collateral withdrawn
+     *  @param tokenCollateralAddress Token address of Collateral
+     *  @param amountCollateral Collateral amount to redeem
+     */
+    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral)
+        public
+        moreThanZero(amountCollateral)
+        nonReentrant
+    {
+        _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
+        _revertIfInsufficientHealthFactor(msg.sender);
+    }
+
+    /**
+     * @notice Burns ESC
+     * @param amount Amount of ESC to be burned
+     */
+    function burnESC(uint256 amount) public moreThanZero(amount) {
+        _burnESC(msg.sender, msg.sender, amount);
+        _revertIfInsufficientHealthFactor(msg.sender); // likely not needed
+    }
+
+    /**
+     * @notice Liquidates user that breaks health factor - partial liquidation is possible. For this protocol always needs to be overcollateralized.
+     * @param collateral The collateral address to liquidate
+     * @param user User who ahs broken the health factor. Health factor should be below MIN_HEALTH_FACTOR
+     * @param debt Debt to cover and amoutn of ESC to burn
+     */
+    function liquidate(address collateral, address user, uint256 debt) external moreThanZero(debt) nonReentrant {
+        uint256 startingHealthFactor = _healthFactor(user);
+        if (startingHealthFactor >= MIN_HEALTH_FACTOR) {
+            revert ESCEngine__NoLiquidationNeeded();
+        }
+
+        uint256 tokenAmountToCoverDebt = getTokenAmountFromUsd(collateral, debt);
+        // should liquidate in case protocol is insolvent, sweep extra amounts into treasury
+
+        // 10 % bonus for liquidator
+        uint256 bonusCollateral = tokenAmountToCoverDebt * LIQUIDATION_BONUS / LIQUIDATION_PRECISION;
+
+        uint256 totalCollateralToRedeem = tokenAmountToCoverDebt + bonusCollateral;
+        _redeemCollateral(user, msg.sender, collateral, totalCollateralToRedeem);
+        _burnESC(user, msg.sender, debt);
+
+        // check health factor (possibly redundant)
+        uint256 endingHealthFactor = _healthFactor(user);
+        if (endingHealthFactor <= startingHealthFactor) {
+            revert ESCEngine__HealthFactorNotImproved();
+        }
+        _revertIfInsufficientHealthFactor(msg.sender);
+    }
 
     /**
      * Getter Functions
+     */
+
+    /**
+     * @notice returns the contract address of the ESC token
      */
     function getESCAddress() external view returns (address) {
         return address(i_esc);
     }
 
+    /**
+     * @notice Returns health factor for user
+     * @param account Account of the user
+     */
     function getHealthFactor(address account) external view returns (uint256) {
         return _healthFactor(account);
+    }
+
+    /**
+     * @notice Returns account information of user
+     * @param account Account of the user
+     */
+    function getAccountInformation(address account)
+        external
+        view
+        returns (uint256 totalMinted, uint256 collateralValueInUsd)
+    {
+        (totalMinted, collateralValueInUsd) = _getAccountInfo(account);
+    }
+
+    /**
+     * @notice Returns allowed tokens for collateral
+     */
+    function getAllowedTokens() external view returns (address[] memory) {
+        return s_collateralTokens;
+    }
+
+    /**
+     * @notice Returns price feed addresses for collateral tokens
+     */
+    function getPriceFeed(address token) external view returns (address) {
+        return s_priceFeeds[token];
+    }
+
+    /**
+     * @notice Returns liquidation bonus in basis points
+     */
+    function getLiquidationBonus() external pure returns (uint256) {
+        return LIQUIDATION_BONUS;
     }
 
     /**
@@ -131,7 +241,7 @@ contract ESCEngine is ReentrancyGuard {
      */
 
     /**
-     * @notice follows CEI
+     * @notice Deposits collateral
      * @param tokenCollateralAddress The address fo the token to deposit as collateral
      * @param amountCollateral The amount of collateral to deposit
      */
@@ -148,6 +258,7 @@ contract ESCEngine is ReentrancyGuard {
         if (!success) {
             revert ESCEngine__TransferFailed();
         }
+        _revertIfInsufficientHealthFactor(msg.sender);
     }
 
     /**
@@ -159,10 +270,7 @@ contract ESCEngine is ReentrancyGuard {
         s_minted[msg.sender] += amount;
 
         // revert if minted too much
-        uint256 healthFactor = _healthFactor(msg.sender);
-        if (healthFactor < MIN_HEALTH_FACTOR) {
-            revert ESCEngine__InsufficientHealthFactor(healthFactor);
-        }
+        _revertIfInsufficientHealthFactor(msg.sender);
 
         bool success = i_esc.mint(msg.sender, amount);
         if (!success) {
@@ -170,15 +278,24 @@ contract ESCEngine is ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice Gets collateral value of user
+     * @param user User account address
+     */
     function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
             uint256 amount = s_collateralDeposited[user][token];
-            totalCollateralValueInUsd += getUsdValue(token, amount);
+            totalCollateralValueInUsd += getUsdValueFromTokenAmount(token, amount);
         }
     }
 
-    function getUsdValue(address token, uint256 amount) public view returns (uint256) {
+    /**
+     * @notice Returns USD value of token from token amount
+     * @param token Contract address of token
+     * @param amount Token amount
+     */
+    function getUsdValueFromTokenAmount(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
 
@@ -187,7 +304,49 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
+     * @notice Returns token amount from USD value
+     * @param token Contract address of token
+     * @param amount Token amount
+     */
+    function getTokenAmountFromUsd(address token, uint256 amount) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+
+        return (amount * PRECISION / (uint256(price) * ADDITIONAL_FEED_PRECISION));
+    }
+
+    /**
      * Private Functions
+     */
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+        private
+    {
+        // reverts if underflow
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
+        emit CollteralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+
+        bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
+        if (!success) {
+            revert ESCEngine__TransferFailed();
+        }
+    }
+
+    function _burnESC(address onBehalfOf, address owner, uint256 amount) private {
+        if (amount > s_minted[onBehalfOf]) {
+            revert ESCEngine__DebtAmountTooLarge();
+        }
+
+        s_minted[onBehalfOf] -= amount;
+        bool success = i_esc.transferFrom(owner, address(this), amount);
+        if (!success) {
+            revert ESCEngine__TransferFailed();
+        }
+        i_esc.burn(amount);
+    }
+
+    /**
+     * @notice Returns total ESC minted and collateral value in USD
+     *  @param user Account address of user
      */
     function _getAccountInfo(address user) private view returns (uint256 totalMinted, uint256 collateralInUsd) {
         totalMinted = s_minted[user];
@@ -200,27 +359,30 @@ contract ESCEngine is ReentrancyGuard {
     function _healthFactor(address user) private view returns (uint256) {
         (uint256 totalEscMinted, uint256 collateralValueInUsd) = _getAccountInfo(user);
 
-        if (totalEscMinted > 0) {
-            uint256 collateralAdjustedForThreshold =
-                (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-            // Example liquidiation:
-            // $150 EARN / 100 ESC = 1.5
-            // 150 * 50 = 7500 => 7500 / 100 = 75 => 75 / 100 = 0.75 < 1
-
-            // Example no liquidation:
-            // $1000 EARN / 100 ESC = 1.5
-            // 1000 * 50 = 50000 => 50000 / 100 = 500 => 500 / 100 = 5 > 1
-
-            return (collateralAdjustedForThreshold / totalEscMinted);
-        } else {
-            return 0;
+        // TODO: This is not a good solution as no minted USD should be very high health factor (cannot revert)
+        if (totalEscMinted == 0) {
+            return 2 ** 256 - 1;
         }
+
+        uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        // Example liquidiation:
+        // $150 EARN / 100 ESC = 1.5
+        // 150 * 50 = 7500 => 7500 / 100 = 75 => 75 / 100 = 0.75 < 1
+
+        // Example no liquidation:
+        // $1000 EARN / 100 ESC = 1.5
+        // 1000 * 50 = 50000 => 50000 / 100 = 500 => 500 / 100 = 5 > 1
+        return (collateralAdjustedForThreshold * PRECISION / totalEscMinted);
     }
 
-    // function _revertIfInsufficientHealthFactor(address user) internal view {
-    //     uint256 healthFactor = _healthFactor(user);
-    //     if (healthFactor < MIN_HEALTH_FACTOR) {
-    //         revert ESCEngine__InsufficientHealthFactor(healthFactor);
-    //     }
-    // }
+    /**
+     * @notice Checks if health factor is broken - if yes, it reverts
+     * @param user User account address
+     */
+    function _revertIfInsufficientHealthFactor(address user) internal view {
+        uint256 healthFactor = _healthFactor(user);
+        if (healthFactor < MIN_HEALTH_FACTOR) {
+            revert ESCEngine__InsufficientHealthFactor(healthFactor);
+        }
+    }
 }

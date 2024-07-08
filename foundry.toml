@@ -7,4 +7,11 @@ optimizer = true
 optimizer_rounds = 200
 fs_permissions = [{ access = "read", path = "./broadcast" }]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[fuzz]
+runs = 10000
+
+[invariant]
+runs = 1000
+depth = 128
+fail_on_revert = false

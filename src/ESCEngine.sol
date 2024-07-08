@@ -359,9 +359,8 @@ contract ESCEngine is ReentrancyGuard {
     function _healthFactor(address user) private view returns (uint256) {
         (uint256 totalEscMinted, uint256 collateralValueInUsd) = _getAccountInfo(user);
 
-        // TODO: This is not a good solution as no minted USD should be very high health factor (cannot revert)
         if (totalEscMinted == 0) {
-            return 2 ** 256 - 1;
+            return type(uint256).max;
         }
 
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;

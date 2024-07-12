@@ -60,10 +60,10 @@ contract EarnStableCoin__UnitTest is Test {
         _;
     }
 
-    modifier deposited(address account) {
+    modifier deposited(address account, address collateral) {
         vm.startPrank(account);
-        ERC20Mock(weth).approve(address(engine), DEPOSIT_AMOUNT);
-        engine.depositCollateral(weth, DEPOSIT_AMOUNT);
+        ERC20Mock(collateral).approve(address(engine), DEPOSIT_AMOUNT);
+        engine.depositCollateral(collateral, DEPOSIT_AMOUNT);
         vm.stopPrank();
         _;
     }
@@ -110,7 +110,7 @@ contract EarnStableCoin__UnitTest is Test {
     function test__unit__ESCEngine__GetUsdValueFromTokenAmount() public view {
         uint256 ethPrice = uint256(helperConfig.ETH_USD_PRICE());
 
-        uint256 ethAmount = 15e18;
+        uint256 ethAmount = 5e17;
         uint256 expectedUsdValue = ethAmount * ethPrice / 1e8; // 52500e18 = 15 * 3500
         uint256 actualUsdValue = engine.getUsdValueFromTokenAmount(weth, ethAmount);
 
@@ -145,7 +145,7 @@ contract EarnStableCoin__UnitTest is Test {
         assertEq(amount, ERC20Mock(weth).balanceOf(address(engine)));
     }
 
-    function test__unit__ESCEngine__GetAccountInfo() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__GetAccountInfo() public funded(USER) deposited(USER, weth) {
         (uint256 totalMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
 
         assertEq(totalMinted, 0);
@@ -218,14 +218,14 @@ contract EarnStableCoin__UnitTest is Test {
         engine.depositCollateral(weth, amount);
     }
 
-    function test__unit__ESCEngine__GetCollateralValue() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__GetCollateralValue() public funded(USER) deposited(USER, weth) {
         assertEq(3500 ether, engine.getAccountCollateralValue(USER));
     }
 
     /**
      * Mint ESC
      */
-    function test__unit__ESCEngine__MintESC() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__MintESC() public funded(USER) deposited(USER, weth) {
         uint256 amount = 100 ether;
 
         vm.prank(USER);
@@ -234,7 +234,7 @@ contract EarnStableCoin__UnitTest is Test {
         assertEq(amount, token.balanceOf(USER));
     }
 
-    function test__unit__ESCEngine__RevertWhen__InsufficientHealthFactor() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RevertWhen__InsufficientHealthFactor() public funded(USER) deposited(USER, weth) {
         uint256 amount = 1400 ether;
         vm.prank(USER);
         engine.mintESC(amount);
@@ -250,7 +250,7 @@ contract EarnStableCoin__UnitTest is Test {
         engine.mintESC(amount);
     }
 
-    function test__unit__ESCEngine__RevertWhen__MintFails() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RevertWhen__MintFails() public funded(USER) deposited(USER, weth) {
         uint256 amount = 200 ether;
 
         vm.mockCall(address(token), abi.encodeWithSelector(token.mint.selector, USER, amount), abi.encode(false));
@@ -263,7 +263,7 @@ contract EarnStableCoin__UnitTest is Test {
     /**
      * Burn ESC
      */
-    function test__unit__ESCEngine__BurnESC() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__BurnESC() public funded(USER) deposited(USER, weth) {
         uint256 mintAmount = 100 ether;
         uint256 burnAmount = 50 ether;
 
@@ -276,7 +276,7 @@ contract EarnStableCoin__UnitTest is Test {
         assertEq(mintAmount - burnAmount, token.balanceOf(USER));
     }
 
-    function test__unit__ESCEngine__RevertsWhen__BurnTransferFails() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RevertsWhen__BurnTransferFails() public funded(USER) deposited(USER, weth) {
         uint256 mintAmount = 100 ether;
         uint256 burnAmount = 50 ether;
 
@@ -299,7 +299,7 @@ contract EarnStableCoin__UnitTest is Test {
     /**
      * Redeem Collateral
      */
-    function test__unit__ESCEngine__RedeemCollateral() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RedeemCollateral() public funded(USER) deposited(USER, weth) {
         uint256 amount = 0.5 ether;
         uint256 startingBalance = IERC20(weth).balanceOf(USER);
 
@@ -309,7 +309,7 @@ contract EarnStableCoin__UnitTest is Test {
         assertEq(amount + startingBalance, IERC20(weth).balanceOf(USER));
     }
 
-    function test__unit__ESCEngine__RevertWhen__RedeemTooMuchCollateral() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RevertWhen__RedeemTooMuchCollateral() public funded(USER) deposited(USER, weth) {
         uint256 amount = 1400 ether; // in USD
         vm.prank(USER);
         engine.mintESC(amount);
@@ -325,7 +325,27 @@ contract EarnStableCoin__UnitTest is Test {
         engine.redeemCollateral(weth, 0.5 ether);
     }
 
-    function test__unit__ESCEngine__RevertsWhen__CollateralTransferFails() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RevertWhen__RedeemTooMuchTokenCollateral()
+        public
+        funded(USER)
+        deposited(USER, wbtc)
+    {
+        uint256 amount = 1400 ether; // in USD
+        vm.prank(USER);
+        engine.mintESC(amount);
+
+        uint256 collateralDeposited = engine.getCollateralBalanceToken(USER, weth);
+        uint256 redeemAmount = 0.5 ether;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ESCEngine.ESCEngine__RedeemAmountExceedsTokenCollateral.selector, collateralDeposited, redeemAmount
+            )
+        );
+        vm.prank(USER);
+        engine.redeemCollateral(weth, redeemAmount);
+    }
+
+    function test__unit__ESCEngine__RevertsWhen__CollateralTransferFails() public funded(USER) deposited(USER, weth) {
         uint256 amount = 0.5 ether;
         vm.mockCall(weth, abi.encodeWithSelector(ERC20Mock(weth).transfer.selector, USER, amount), abi.encode(false));
 
@@ -337,7 +357,7 @@ contract EarnStableCoin__UnitTest is Test {
     /**
      * Redeem collateral for ESC
      */
-    function test__unit__ESCEngine__RedeemCollateralForESC() public funded(USER) deposited(USER) {
+    function test__unit__ESCEngine__RedeemCollateralForESC() public funded(USER) deposited(USER, weth) {
         uint256 startingEthBalance = IERC20(weth).balanceOf(USER);
 
         uint256 escAmount = 1750 ether; // in USD
@@ -378,9 +398,9 @@ contract EarnStableCoin__UnitTest is Test {
     function test__unit__ESCEngine__Liquidate()
         public
         funded(USER)
-        deposited(USER)
+        deposited(USER, weth)
         funded(LIQUIDATOR)
-        deposited(LIQUIDATOR)
+        deposited(LIQUIDATOR, weth)
     {
         uint256 startingEthBalance = IERC20(weth).balanceOf(LIQUIDATOR);
 
@@ -411,9 +431,9 @@ contract EarnStableCoin__UnitTest is Test {
     function test__unit__ESCEngine__RevertsWhen__NoLiquidationNeeded()
         public
         funded(USER)
-        deposited(USER)
+        deposited(USER, weth)
         funded(LIQUIDATOR)
-        deposited(LIQUIDATOR)
+        deposited(LIQUIDATOR, weth)
     {
         uint256 escAmount = 100 ether; // in USD
         vm.prank(USER);
@@ -437,9 +457,9 @@ contract EarnStableCoin__UnitTest is Test {
     function test__unit__ESCEngine__RevertsWhen__DebtAmountTooLarge()
         public
         funded(USER)
-        deposited(USER)
+        deposited(USER, weth)
         funded(LIQUIDATOR)
-        deposited(LIQUIDATOR)
+        deposited(LIQUIDATOR, weth)
     {
         uint256 escAmount = 1750 ether; // in USD
         vm.prank(USER);
@@ -461,5 +481,52 @@ contract EarnStableCoin__UnitTest is Test {
         vm.expectRevert(ESCEngine.ESCEngine__DebtAmountTooLarge.selector);
         vm.prank(LIQUIDATOR);
         engine.liquidate(weth, USER, debtAmount);
+    }
+
+    /**
+     * Max Redeemable Collateral
+     */
+    function test__unit__ESCEngine__MaxRedeemableCollateral() public funded(USER) deposited(USER, weth) {
+        uint256 escAmount = 1000 ether; // in USD
+        vm.prank(USER);
+        engine.mintESC(escAmount);
+
+        uint256 maxRedeemableCollateral = engine.getMaxCollateralToRedeem(weth, USER);
+
+        vm.prank(USER);
+        engine.redeemCollateral(weth, maxRedeemableCollateral);
+
+        uint256 healthfactor = engine.getHealthFactor(USER);
+        assertEq(healthfactor, 1e18);
+    }
+
+    /**
+     * Getter functions
+     */
+    function test__unit__ESCEngine__GetCollateralBalanceToken() public funded(USER) deposited(USER, weth) {
+        uint256 collateralAmount = engine.getCollateralBalanceToken(USER, weth);
+
+        assertEq(collateralAmount, DEPOSIT_AMOUNT);
+    }
+
+    function test__unit__ESCEngine__GetCollateralBalanceUsd() public funded(USER) deposited(USER, weth) {
+        uint256 collateralAmount = engine.getCollateralBalanceUsd(USER, weth);
+
+        assertEq(collateralAmount, 3500 ether);
+    }
+
+    function test__unit__ESCEngine__GetMaxMintableEsc() public funded(USER) deposited(USER, weth) {
+        uint256 escAmount = 1000 ether; // in USD
+        vm.prank(USER);
+        engine.mintESC(escAmount);
+
+        uint256 maxMintableEsc = engine.getMaxMintableEscAmount(USER);
+        console.log(maxMintableEsc);
+
+        vm.prank(USER);
+        engine.mintESC(maxMintableEsc);
+
+        uint256 healthfactor = engine.getHealthFactor(USER);
+        assertEq(healthfactor, 1e18);
     }
 }

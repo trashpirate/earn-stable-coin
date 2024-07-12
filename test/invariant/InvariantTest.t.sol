@@ -14,6 +14,8 @@ import {EarnStableCoin} from "./../../src/EarnStableCoin.sol";
 import {DeployESC} from "./../../script/DeployESC.s.sol";
 import {HelperConfig} from "./../../script/HelperConfig.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Handler} from "./Handler.t.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract InvariantTest is StdInvariant, Test {
     // configuration
@@ -30,6 +32,17 @@ contract InvariantTest is StdInvariant, Test {
     address ethUsdPriceFeed;
     address btcUsdPriceFeed;
 
+    // testing
+    Handler handler;
+
+    // modifiers
+    modifier skipFork() {
+        if (block.chainid != 31337) {
+            return;
+        }
+        _;
+    }
+
     function setUp() external virtual {
         deployment = new DeployESC();
         (engine, helperConfig) = deployment.run();
@@ -37,10 +50,25 @@ contract InvariantTest is StdInvariant, Test {
 
         (,, weth, wbtc) = helperConfig.activeNetworkConfig();
 
-        targetContract(address(engine));
+        handler = new Handler(engine, esc);
+
+        excludeSender(address(0));
+        excludeSender(address(esc));
+        excludeSender(address(engine));
+        excludeSender(address(handler));
+
+        bytes4[] memory selectors = new bytes4[](4);
+        selectors[0] = Handler.depositCollateral.selector;
+        selectors[1] = Handler.redeemCollateral.selector;
+        selectors[2] = Handler.mintESC.selector;
+        selectors[3] = Handler.callSummary.selector;
+
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+
+        targetContract(address(handler));
     }
 
-    function invariant__protocolMustHaveMoreValueThanTotalSupplyESC() public view {
+    function invariant__ProtocolMustHaveMoreValueThanTotalSupplyESC() public view skipFork {
         // total ESC
         uint256 totalSupply = esc.totalSupply();
 
@@ -57,5 +85,9 @@ contract InvariantTest is StdInvariant, Test {
 
         // test
         assertGe(wethValue + wbtcValue, totalSupply);
+    }
+
+    function invariant__CallSummary() public view skipFork {
+        handler.callSummary();
     }
 }

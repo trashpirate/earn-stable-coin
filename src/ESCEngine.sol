@@ -1,6 +1,7 @@
 // SPDX-License Identifier: MIT
 pragma solidity 0.8.20;
 
+import {Test, console} from "forge-std/Test.sol";
 import {EarnStableCoin} from "./EarnStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -32,8 +33,8 @@ contract ESCEngine is ReentrancyGuard {
     uint256 private constant LIQUIDATION_BONUS = 10; // 10 percent bonus
 
     mapping(address token => address priceFeed) private s_priceFeeds;
-    mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
-    mapping(address user => uint256 amountMinted) private s_minted;
+    mapping(address account => mapping(address token => uint256 amount)) private s_collateralDeposited;
+    mapping(address account => uint256 amountMinted) private s_minted;
 
     address[] private s_collateralTokens;
 
@@ -42,7 +43,7 @@ contract ESCEngine is ReentrancyGuard {
     /**
      * Events
      */
-    event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
+    event CollateralDeposited(address indexed account, address indexed token, uint256 indexed amount);
     event CollteralRedeemed(address indexed from, address indexed to, address indexed token, uint256 amount);
 
     /**
@@ -58,6 +59,7 @@ contract ESCEngine is ReentrancyGuard {
     error ESCEngine__HealthFactorNotImproved();
     error ESCEngine__HealthFactorNotAvailable();
     error ESCEngine__DebtAmountTooLarge();
+    error ESCEngine__RedeemAmountExceedsTokenCollateral(uint256 collateralDeposited, uint256 redeemAmount);
 
     /**
      * Modifiers
@@ -155,13 +157,13 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
-     * @notice Liquidates user that breaks health factor - partial liquidation is possible. For this protocol always needs to be overcollateralized.
+     * @notice Liquidates account that breaks health factor - partial liquidation is possible. For this protocol always needs to be overcollateralized.
      * @param collateral The collateral address to liquidate
-     * @param user User who ahs broken the health factor. Health factor should be below MIN_HEALTH_FACTOR
+     * @param account User who ahs broken the health factor. Health factor should be below MIN_HEALTH_FACTOR
      * @param debt Debt to cover and amoutn of ESC to burn
      */
-    function liquidate(address collateral, address user, uint256 debt) external moreThanZero(debt) nonReentrant {
-        uint256 startingHealthFactor = _healthFactor(user);
+    function liquidate(address collateral, address account, uint256 debt) external moreThanZero(debt) nonReentrant {
+        uint256 startingHealthFactor = _healthFactor(account);
         if (startingHealthFactor >= MIN_HEALTH_FACTOR) {
             revert ESCEngine__NoLiquidationNeeded();
         }
@@ -173,11 +175,11 @@ contract ESCEngine is ReentrancyGuard {
         uint256 bonusCollateral = tokenAmountToCoverDebt * LIQUIDATION_BONUS / LIQUIDATION_PRECISION;
 
         uint256 totalCollateralToRedeem = tokenAmountToCoverDebt + bonusCollateral;
-        _redeemCollateral(user, msg.sender, collateral, totalCollateralToRedeem);
-        _burnESC(user, msg.sender, debt);
+        _redeemCollateral(account, msg.sender, collateral, totalCollateralToRedeem);
+        _burnESC(account, msg.sender, debt);
 
         // check health factor (possibly redundant)
-        uint256 endingHealthFactor = _healthFactor(user);
+        uint256 endingHealthFactor = _healthFactor(account);
         if (endingHealthFactor <= startingHealthFactor) {
             revert ESCEngine__HealthFactorNotImproved();
         }
@@ -196,16 +198,16 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
-     * @notice Returns health factor for user
-     * @param account Account of the user
+     * @notice Returns health factor for account
+     * @param account Account of the account
      */
     function getHealthFactor(address account) external view returns (uint256) {
         return _healthFactor(account);
     }
 
     /**
-     * @notice Returns account information of user
-     * @param account Account of the user
+     * @notice Returns account information of account
+     * @param account Account of the account
      */
     function getAccountInformation(address account)
         external
@@ -213,6 +215,18 @@ contract ESCEngine is ReentrancyGuard {
         returns (uint256 totalMinted, uint256 collateralValueInUsd)
     {
         (totalMinted, collateralValueInUsd) = _getAccountInfo(account);
+    }
+
+    /**
+     * @notice Returns collateral deposited
+     * @param account Account of the account
+     */
+    function getCollateralBalanceToken(address account, address token)
+        external
+        view
+        returns (uint256 collateralBalance)
+    {
+        collateralBalance = s_collateralDeposited[account][token];
     }
 
     /**
@@ -237,6 +251,45 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
+     * @notice Returns maximum redeemable collateral
+     */
+    function getMaxCollateralToRedeem(address collateral, address account) external view returns (uint256) {
+        // total collateral value for account
+        uint256 collateralValueInUsd = getAccountCollateralValue(account);
+
+        // redeemable collateral value without breaking health factor
+        uint256 unusedCollateralValueInUsd =
+            collateralValueInUsd - s_minted[account] * LIQUIDATION_PRECISION / LIQUIDATION_THRESHOLD;
+
+        // redeemable collateral value for collateral token
+        uint256 collateralTokenValueInUsd = getCollateralBalanceUsd(account, collateral);
+
+        // redeemable amount - whichever is smaller
+        uint256 redeemableCollateralTokenValue = collateralTokenValueInUsd < unusedCollateralValueInUsd
+            ? collateralTokenValueInUsd
+            : unusedCollateralValueInUsd;
+
+        // redeemable amount in tokens
+        uint256 maxRedeemableCollateral = getTokenAmountFromUsd(collateral, redeemableCollateralTokenValue);
+        return maxRedeemableCollateral;
+    }
+
+    /**
+     * @notice Returns maximum mintable ESC amount
+     */
+    function getMaxMintableEscAmount(address account) external view returns (uint256 maxMintableEsc) {
+        // total collateral value for account
+        (uint256 totalMinted, uint256 collateralValueInUsd) = _getAccountInfo(account);
+
+        uint256 borrowPower = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        if (borrowPower > 0) {
+            maxMintableEsc = borrowPower - totalMinted;
+        } else {
+            maxMintableEsc = 0;
+        }
+    }
+
+    /**
      * Public Functions
      */
 
@@ -251,7 +304,7 @@ contract ESCEngine is ReentrancyGuard {
         moreThanZero(amountCollateral)
         nonReentrant
     {
-        s_collateralDeposited[msg.sender][tokenCollateralAddress] = amountCollateral;
+        s_collateralDeposited[msg.sender][tokenCollateralAddress] += amountCollateral;
         emit CollateralDeposited(msg.sender, tokenCollateralAddress, amountCollateral);
 
         bool success = IERC20(tokenCollateralAddress).transferFrom(msg.sender, address(this), amountCollateral);
@@ -279,15 +332,23 @@ contract ESCEngine is ReentrancyGuard {
     }
 
     /**
-     * @notice Gets collateral value of user
-     * @param user User account address
+     * @notice Gets collateral value of account
+     * @param account User account address
      */
-    function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
+    function getAccountCollateralValue(address account) public view returns (uint256 totalCollateralValueInUsd) {
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
-            uint256 amount = s_collateralDeposited[user][token];
+            uint256 amount = s_collateralDeposited[account][token];
             totalCollateralValueInUsd += getUsdValueFromTokenAmount(token, amount);
         }
+    }
+
+    /**
+     * @notice Returns collateral deposited in USD value
+     * @param account Account of the account
+     */
+    function getCollateralBalanceUsd(address account, address token) public view returns (uint256 collateralBalance) {
+        collateralBalance = getUsdValueFromTokenAmount(token, s_collateralDeposited[account][token]);
     }
 
     /**
@@ -295,12 +356,12 @@ contract ESCEngine is ReentrancyGuard {
      * @param token Contract address of token
      * @param amount Token amount
      */
-    function getUsdValueFromTokenAmount(address token, uint256 amount) public view returns (uint256) {
+    function getUsdValueFromTokenAmount(address token, uint256 amount) public view returns (uint256 usdAmount) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
 
         // returned value by Chainlink will be 1000 * 1e8
-        return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount / PRECISION);
+        usdAmount = ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount / PRECISION);
     }
 
     /**
@@ -318,14 +379,19 @@ contract ESCEngine is ReentrancyGuard {
     /**
      * Private Functions
      */
-    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 redeemAmount)
         private
     {
         // reverts if underflow
-        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
-        emit CollteralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+        uint256 collateralDeposited = s_collateralDeposited[from][tokenCollateralAddress];
+        if (redeemAmount > collateralDeposited) {
+            revert ESCEngine__RedeemAmountExceedsTokenCollateral(collateralDeposited, redeemAmount);
+        }
+        s_collateralDeposited[from][tokenCollateralAddress] -= redeemAmount;
 
-        bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
+        emit CollteralRedeemed(from, to, tokenCollateralAddress, redeemAmount);
+
+        bool success = IERC20(tokenCollateralAddress).transfer(to, redeemAmount);
         if (!success) {
             revert ESCEngine__TransferFailed();
         }
@@ -346,23 +412,22 @@ contract ESCEngine is ReentrancyGuard {
 
     /**
      * @notice Returns total ESC minted and collateral value in USD
-     *  @param user Account address of user
+     *  @param account Account address of account
      */
-    function _getAccountInfo(address user) private view returns (uint256 totalMinted, uint256 collateralInUsd) {
-        totalMinted = s_minted[user];
-        collateralInUsd = getAccountCollateralValue(user);
+    function _getAccountInfo(address account) private view returns (uint256 totalMinted, uint256 collateralInUsd) {
+        totalMinted = s_minted[account];
+        collateralInUsd = getAccountCollateralValue(account);
     }
 
     /**
-     * @notice Returns how close to liquidition a user is. Liquidiation occurs at <= 1
+     * @notice Returns how close to liquidition a account is. Liquidiation occurs at <= 1
      */
-    function _healthFactor(address user) private view returns (uint256) {
-        (uint256 totalEscMinted, uint256 collateralValueInUsd) = _getAccountInfo(user);
+    function _healthFactor(address account) private view returns (uint256 healthFactor) {
+        (uint256 totalEscMinted, uint256 collateralValueInUsd) = _getAccountInfo(account);
 
         if (totalEscMinted == 0) {
             return type(uint256).max;
         }
-
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         // Example liquidiation:
         // $150 EARN / 100 ESC = 1.5
@@ -371,15 +436,15 @@ contract ESCEngine is ReentrancyGuard {
         // Example no liquidation:
         // $1000 EARN / 100 ESC = 1.5
         // 1000 * 50 = 50000 => 50000 / 100 = 500 => 500 / 100 = 5 > 1
-        return (collateralAdjustedForThreshold * PRECISION / totalEscMinted);
+        healthFactor = (collateralAdjustedForThreshold * PRECISION / totalEscMinted);
     }
 
     /**
      * @notice Checks if health factor is broken - if yes, it reverts
-     * @param user User account address
+     * @param account User account address
      */
-    function _revertIfInsufficientHealthFactor(address user) internal view {
-        uint256 healthFactor = _healthFactor(user);
+    function _revertIfInsufficientHealthFactor(address account) internal view {
+        uint256 healthFactor = _healthFactor(account);
         if (healthFactor < MIN_HEALTH_FACTOR) {
             revert ESCEngine__InsufficientHealthFactor(healthFactor);
         }

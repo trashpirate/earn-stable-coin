@@ -45,16 +45,16 @@ slither :; slither ./src
 
 # deployment
 deploy-local: 
-	@forge script script/deployment/DeployNFTContract.s.sol:DeployNFTContract --rpc-url localhost --private-key ${DEFAULT_ANVIL_KEY} --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --broadcast 
+	@forge script script/deployment/DeployESC.s.sol:DeployESC --rpc-url localhost --private-key ${DEFAULT_ANVIL_KEY} --sender 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --broadcast 
 
 deploy-token-testnet: 
 	@forge script script/deployment/DeployERC20Token.s.sol:DeployERC20Token --rpc-url $(RPC_ETH_SEPOLIA) --account Test-Deployer --sender 0x11F392Ba82C7d63bFdb313Ca63372F6De21aB448 --broadcast --verify --etherscan-api-key ${ETHERSCAN_API_KEY} -vvvv
 
 deploy-testnet: 
-	@forge script script/deployment/DeployNFTContract.s.sol:DeployNFTContract --rpc-url $(RPC_ETH_SEPOLIA) --account Test-Deployer --sender 0x11F392Ba82C7d63bFdb313Ca63372F6De21aB448 --broadcast --verify --etherscan-api-key ${ETHERSCAN_API_KEY} -vvvv
+	@forge script script/deployment/DeployESC.s.sol:DeployESC --rpc-url $(RPC_ETH_SEPOLIA) --account Test-Deployer --sender 0x11F392Ba82C7d63bFdb313Ca63372F6De21aB448 --broadcast --verify --etherscan-api-key ${ETHERSCAN_API_KEY} -vvvv
 
 deploy-mainnet: 
-	@forge script script/deployment/DeployNFTContract.s.sol:DeployNFTContract --rpc-url $(RPC_ETH_MAIN) --account PGENZ-Deployer --sender 0xda65502E913e81544E54693EB0b8e950104951C8 --broadcast -g 110 --verify --etherscan-api-key ${ETHERSCAN_API_KEY} -vvvv
+	@forge script script/deployment/DeployESC.s.sol:DeployESC --rpc-url $(RPC_ETH_MAIN) --account PGENZ-Deployer --sender 0xda65502E913e81544E54693EB0b8e950104951C8 --broadcast -g 110 --verify --etherscan-api-key ${ETHERSCAN_API_KEY} -vvvv
 
 
 -include ${FCT_PLUGIN_PATH}/makefile-external

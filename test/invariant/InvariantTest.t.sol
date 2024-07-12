@@ -15,7 +15,6 @@ import {DeployESC} from "./../../script/DeployESC.s.sol";
 import {HelperConfig} from "./../../script/HelperConfig.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Handler} from "./Handler.t.sol";
-import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract InvariantTest is StdInvariant, Test {
     // configuration
@@ -61,6 +60,7 @@ contract InvariantTest is StdInvariant, Test {
         selectors[0] = Handler.depositCollateral.selector;
         selectors[1] = Handler.redeemCollateral.selector;
         selectors[2] = Handler.mintESC.selector;
+        // selectors[3] = Handler.updateCollateralPrice.selector;
         selectors[3] = Handler.callSummary.selector;
 
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));

@@ -6,7 +6,7 @@ import {EarnStableCoin} from "./EarnStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-
+import {OracleLib} from "./libraries/OracleLib.sol";
 /**
  * @title EarnStableCoin
  * @author Nadina Oates
@@ -19,9 +19,15 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  *
  * The ESC systems should always be "overcollateralized". At no point, should the value of all collateral >= the $ backed value of all ESC
  * @notice This contract is the core of the ESC system. It handles all thelogic for mining and redeeming ESC, as well as depositing & withdrawing collteral
- * @notice This contract is VERY loolsely base on the MakerDAO DSS (DAI) system.
+ * @notice This contract is VERY loolsely based on the MakerDAO DSS (DAI) system.
  */
+
 contract ESCEngine is ReentrancyGuard {
+    /**
+     * Types
+     */
+    using OracleLib for AggregatorV3Interface;
+
     /**
      * State variables
      */
@@ -358,7 +364,7 @@ contract ESCEngine is ReentrancyGuard {
      */
     function getUsdValueFromTokenAmount(address token, uint256 amount) public view returns (uint256 usdAmount) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
 
         // returned value by Chainlink will be 1000 * 1e8
         usdAmount = ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount / PRECISION);
@@ -371,7 +377,7 @@ contract ESCEngine is ReentrancyGuard {
      */
     function getTokenAmountFromUsd(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
 
         return (amount * PRECISION / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }

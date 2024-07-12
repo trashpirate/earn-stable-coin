@@ -6,6 +6,7 @@ import {ESCEngine} from "./../../src/ESCEngine.sol";
 import {EarnStableCoin} from "./../../src/EarnStableCoin.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {LibAddressSet} from "./LibAddressSet.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 import {CommonBase} from "forge-std/Base.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
@@ -22,6 +23,8 @@ contract Handler is CommonBase, StdCheats, StdUtils, Test {
 
     address weth;
     address wbtc;
+    address wethUsdPriceFeed;
+    address wbtcUsdPriceFeed;
 
     uint256 MAX_DEPOSIT_SIZE = type(uint96).max;
 
@@ -56,6 +59,9 @@ contract Handler is CommonBase, StdCheats, StdUtils, Test {
         address[] memory collateralAddresses = escEngine.getAllowedTokens();
         weth = collateralAddresses[0];
         wbtc = collateralAddresses[1];
+
+        wethUsdPriceFeed = escEngine.getPriceFeed(weth);
+        wbtcUsdPriceFeed = escEngine.getPriceFeed(wbtc);
     }
 
     function depositCollateral(uint256 collateralSeed, uint256 amountCollateral)
@@ -102,6 +108,15 @@ contract Handler is CommonBase, StdCheats, StdUtils, Test {
         vm.prank(currentActor);
         escEngine.mintESC(amount);
         timesMintCalled++;
+    }
+
+    // this breaks if price drops too quickly
+    function updateCollateralPrice(uint96 ethNewPrice, uint96 btcNewPrice) public countCall("updatePrice") {
+        int256 ethNewPriceInt = int256(uint256(ethNewPrice));
+        MockV3Aggregator(wethUsdPriceFeed).updateAnswer(ethNewPriceInt);
+
+        int256 btcNewPriceInt = int256(uint256(btcNewPrice));
+        MockV3Aggregator(wethUsdPriceFeed).updateAnswer(btcNewPriceInt);
     }
 
     // Helper functions

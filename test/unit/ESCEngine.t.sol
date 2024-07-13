@@ -90,7 +90,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Constructor
+     * CONSTRUCTOR
      */
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
@@ -105,7 +105,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Price Feed
+     * PRICE FEED
      */
     function test__unit__ESCEngine__GetUsdValueFromTokenAmount() public view {
         uint256 ethPrice = uint256(helperConfig.ETH_USD_PRICE());
@@ -132,7 +132,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Deposit Collateral
+     * DEPOSIT COLLATERAL
      */
     function test__unit__ESCEngine__DepositCollateral() public funded(USER) {
         uint256 amount = 200 ether;
@@ -223,7 +223,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Mint ESC
+     * MINT ESC
      */
     function test__unit__ESCEngine__MintESC() public funded(USER) deposited(USER, weth) {
         uint256 amount = 100 ether;
@@ -261,7 +261,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Burn ESC
+     * BURN ESC
      */
     function test__unit__ESCEngine__BurnESC() public funded(USER) deposited(USER, weth) {
         uint256 mintAmount = 100 ether;
@@ -297,7 +297,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Redeem Collateral
+     * REDEEM COLLATERAL
      */
     function test__unit__ESCEngine__RedeemCollateral() public funded(USER) deposited(USER, weth) {
         uint256 amount = 0.5 ether;
@@ -355,7 +355,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Redeem collateral for ESC
+     * REDEEM COLLATERAL FOR ESC
      */
     function test__unit__ESCEngine__RedeemCollateralForESC() public funded(USER) deposited(USER, weth) {
         uint256 startingEthBalance = IERC20(weth).balanceOf(USER);
@@ -377,7 +377,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Deposit Collateral And Mint
+     * DEPOSIT COLLATERAL AND MINT
      */
     function test__unit__ESCEngine__DepositCollateralAndMint() public funded(USER) {
         uint256 amountCollateral = 1 ether; // ETH
@@ -393,7 +393,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Liquidate
+     * LIQUIDATE
      */
     function test__unit__ESCEngine__Liquidate()
         public
@@ -484,7 +484,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Max Redeemable Collateral
+     * MAX REDEEMABLE COLLATERAL
      */
     function test__unit__ESCEngine__MaxRedeemableCollateral() public funded(USER) deposited(USER, weth) {
         uint256 escAmount = 1000 ether; // in USD
@@ -501,7 +501,7 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
-     * Getter functions
+     * GETTER FUNCTIONS
      */
     function test__unit__ESCEngine__GetCollateralBalanceToken() public funded(USER) deposited(USER, weth) {
         uint256 collateralAmount = engine.getCollateralBalanceToken(USER, weth);

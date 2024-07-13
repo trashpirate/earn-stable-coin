@@ -56,6 +56,14 @@ contract EarnStableCoin__UnitTest is Test {
     }
 
     /**
+     * CONSTRUCTOR
+     */
+    function test__unit__EarnStableCoin__Constructor() public {
+        EarnStableCoin esc = new EarnStableCoin();
+        assertEq(esc.owner(), address(this));
+    }
+
+    /**
      * MINT TOKENS
      */
     function test__unit__EarnStableCoin__Mint() public {

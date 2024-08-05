@@ -22,9 +22,12 @@ This stablecoin has the properties:
 3. Collateral: Exogenous/Endogenous (Crypto)
     1. wETH
     2. wBTC
-    3. EARN (still to be implemented)
 
-The collaterall tokens used are wrapped BTC and wrapped ETH. Still to be implemented is to accept ERC20 token EARN.
+The collaterall tokens used are wrapped BTC and wrapped ETH.
+
+TODO:  
+1. Fee and interest payment with EARN token.
+2. Automatic liquidation on price drop
 
 ## Installation
 
